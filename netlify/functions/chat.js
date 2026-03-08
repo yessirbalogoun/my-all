@@ -1,55 +1,52 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Netlify Function : proxy sécurisé vers l'API Anthropic
-// La clé API ne quitte JAMAIS ce fichier côté serveur.
-// L'app React appelle /api/chat → cette fonction → Anthropic
-// ─────────────────────────────────────────────────────────────────────────────
+// Netlify Function v1 — proxy sécurisé vers l'API Anthropic
+// Syntaxe classique, compatible avec tous les environnements Netlify
 
-export default async (req) => {
+export const handler = async (event) => {
 
-  // 1. Autoriser uniquement les requêtes POST
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Méthode non autorisée' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' },
-    })
+  // Autoriser uniquement POST
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ error: 'Méthode non autorisée' }),
+    }
   }
 
-  // 2. Vérifier que la clé API est bien configurée côté Netlify
+  // Vérifier la clé API
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'Clé API manquante. Configure ANTHROPIC_API_KEY dans les variables Netlify.' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Clé API manquante dans les variables Netlify.' }),
+    }
   }
 
-  // 3. Lire le corps de la requête envoyée par l'app
+  // Lire le corps
   let body
   try {
-    body = await req.json()
+    body = JSON.parse(event.body)
   } catch {
-    return new Response(JSON.stringify({ error: 'Corps de requête invalide.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'Corps de requête invalide.' }),
+    }
   }
 
   const { system, messages } = body
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return new Response(JSON.stringify({ error: 'Messages manquants.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'Messages manquants.' }),
+    }
   }
 
-  // 4. Appeler l'API Anthropic avec la clé cachée
+  // Appeler Anthropic
   try {
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type':    'application/json',
-        'x-api-key':       apiKey,               // ← clé injectée par Netlify, jamais visible
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -60,24 +57,21 @@ export default async (req) => {
       }),
     })
 
-    // 5. Retransmettre la réponse d'Anthropic vers l'app
-    const data = await anthropicRes.json()
+    const data = await response.json()
 
-    return new Response(JSON.stringify(data), {
-      status: anthropicRes.status,
+    return {
+      statusCode: 200,
       headers: {
         'Content-Type':                'application/json',
         'Access-Control-Allow-Origin': '*',
       },
-    })
+      body: JSON.stringify(data),
+    }
 
   } catch (err) {
-    return new Response(JSON.stringify({ error: `Erreur serveur : ${err.message}` }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: `Erreur serveur : ${err.message}` }),
+    }
   }
 }
-
-// Route exposée par Netlify
-export const config = { path: '/api/chat' }
