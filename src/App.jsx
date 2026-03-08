@@ -22,7 +22,7 @@ const fmtDateShort = d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeri
 const greet = () => { const h = new Date().getHours(); return h < 6 ? 'Bonne nuit' : h < 12 ? 'Bonjour' : h < 18 ? 'Bon après-midi' : 'Bonsoir' }
 
 const mkDefault = (name) => ({
-  user: { name, createdAt: now(), apiKey: '' },
+  user: { name, createdAt: now() },
   finances: { transactions: [], objectifs: [], budget: 0 },
   objectifs: [],
   relations: [],
@@ -95,21 +95,21 @@ ${relations.map(r => `  ${r.name} (${r.category}): ${daysSince(r.lastContact) ==
 Si tu vois des choses préoccupantes (budget dépassé, habitude abandonnée, relation négligée, objectif au point mort), mentionne-les spontanément avec bienveillance.`
 }
 
+// ── Appel IA — via /api/chat (Netlify Function), jamais directement ─────────
+// La clé API est dans les variables Netlify. L'app ne la voit jamais.
 async function callAI(messages, data) {
-  const apiKey = data?.user?.apiKey || ''
-  const headers = { 'Content-Type': 'application/json' }
-  if (apiKey) headers['x-api-key'] = apiKey
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('/.netlify/functions/chat', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: buildContext(data),
-      messages: messages.map(m => ({ role: m.role, content: m.content }))
-    })
+      system:   buildContext(data),
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+    }),
   })
-  if (!res.ok) throw new Error('API error')
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || 'Erreur ' + res.status)
+  }
   const d = await res.json()
   return d.content?.[0]?.text || "Je n'ai pas pu répondre."
 }
@@ -734,22 +734,29 @@ function RelationsTab({ data, update }) {
 }
 
 // ── RÉGLAGES ──────────────────────────────────────────────────────────────────
-function SettingsModal({ data, update, onClose }) {
-  const [key, setKey] = useState(data?.user?.apiKey || '')
-  const save = () => { update(d => ({ ...d, user: { ...d.user, apiKey: key.trim() } })); onClose() }
+function SettingsModal({ data, onClose }) {
+  const name = data?.user?.name || ''
   return (
-    <Modal title="Réglages" subtitle="Paramètres de ton espace" onClose={onClose}>
-      <div style={{ ...CARD, background: C.goldDim, border: `1px solid rgba(212,168,83,0.2)`, padding: '14px 16px' }}>
-        <p style={{ color: C.gold, fontSize: '13px', lineHeight: 1.6 }}>
-          <strong>Clé API Anthropic</strong><br />
-          Nécessaire uniquement si tu utilises l'app en dehors de Claude.ai (ex: Netlify). Dans Claude.ai, l'IA fonctionne gratuitement sans clé.
+    <Modal title="Réglages" subtitle={"Espace de " + name} onClose={onClose}>
+      {/* Info IA */}
+      <div style={{ ...CARD, background: C.goldDim, border: "1px solid rgba(212,168,83,0.2)", padding: "14px 16px" }}>
+        <p style={{ color: C.gold, fontSize: "13px", lineHeight: 1.6 }}>
+          <strong>IA connectée ✓</strong><br />
+          L'IA utilise la clé API configurée dans les variables d'environnement Netlify. Aucune clé ne transite par l'app.
         </p>
       </div>
-      <Input label="Clé API (optionnel)" value={key} onChange={setKey} placeholder="sk-ant-api03-..." />
-      <Btn onClick={save} full>Enregistrer</Btn>
-      <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: '16px' }}>
-        <p style={{ color: C.textDim, fontSize: '12px', marginBottom: '10px' }}>Données de l'app</p>
-        <Btn onClick={() => { if (window.confirm('Supprimer toutes tes données ?')) { localStorage.removeItem(KEY); window.location.reload() } }} variant="danger" full small>
+      {/* Infos compte */}
+      <div style={{ ...CARD, padding: "14px 16px" }}>
+        <p style={{ color: C.textDim, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>Compte</p>
+        <p style={{ fontSize: "15px", fontWeight: 600 }}>{name}</p>
+        <p style={{ color: C.textDim, fontSize: "12px", marginTop: "2px" }}>
+          Membre depuis {new Date(data?.user?.createdAt || Date.now()).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+        </p>
+      </div>
+      {/* Danger zone */}
+      <div style={{ borderTop: "1px solid " + C.border, paddingTop: "16px" }}>
+        <p style={{ color: C.textDim, fontSize: "12px", marginBottom: "10px" }}>Zone dangereuse</p>
+        <Btn onClick={() => { if (window.confirm("Supprimer toutes tes données ? Cette action est irréversible.")) { localStorage.removeItem(KEY); window.location.reload() } }} variant="danger" full small>
           <Trash2 size={12} /> Supprimer mes données
         </Btn>
       </div>
@@ -788,7 +795,7 @@ function MainApp({ data, update }) {
           </button>
         ))}
       </nav>
-      {showSettings && <SettingsModal data={data} update={update} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal data={data} onClose={() => setShowSettings(false)} />}
     </div>
   )
 }
